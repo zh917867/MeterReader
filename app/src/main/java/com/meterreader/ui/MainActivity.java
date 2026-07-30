@@ -2,6 +2,8 @@ package com.meterreader.ui;
 
 import android.bluetooth.BluetoothDevice;
 import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.os.Build;
 import android.os.Bundle;
 import android.view.View;
 import android.widget.AdapterView;
@@ -11,9 +13,12 @@ import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 import androidx.lifecycle.ViewModelProvider;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
@@ -55,6 +60,25 @@ public class MainActivity extends AppCompatActivity {
     // 多表数据显示的简单状态
     private boolean showingMeterList = false;
 
+    // 运行时权限请求码
+    private static final int REQUEST_BLUETOOTH_PERMISSIONS = 100;
+
+    /**
+     * Android 12+ 蓝牙运行时权限列表
+     */
+    private static final String[] BLUETOOTH_PERMISSIONS_API31 = {
+        android.Manifest.permission.BLUETOOTH_SCAN,
+        android.Manifest.permission.BLUETOOTH_CONNECT,
+        android.Manifest.permission.ACCESS_FINE_LOCATION
+    };
+
+    /**
+     * Android 10-11 蓝牙扫描需要定位权限
+     */
+    private static final String[] BLUETOOTH_PERMISSIONS_LEGACY = {
+        android.Manifest.permission.ACCESS_FINE_LOCATION
+    };
+
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -66,6 +90,102 @@ public class MainActivity extends AppCompatActivity {
         initSpinner();
         observeData();
         setupClickListeners();
+
+        // 检查并请求蓝牙运行时权限
+        requestBluetoothPermissions();
+    }
+
+    /**
+     * 检查并请求蓝牙相关运行时权限
+     */
+    private void requestBluetoothPermissions() {
+        String[] permissions;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            // Android 12+ (API 31+)
+            permissions = BLUETOOTH_PERMISSIONS_API31;
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // Android 10-11 (API 29-30)
+            permissions = BLUETOOTH_PERMISSIONS_LEGACY;
+        } else {
+            // Android 9及以下，无需运行时权限，直接初始化蓝牙
+            viewModel.initializeBluetooth();
+            return;
+        }
+
+        // 检查是否所有权限都已授予
+        boolean allGranted = true;
+        for (String perm : permissions) {
+            if (ContextCompat.checkSelfPermission(this, perm)
+                    != PackageManager.PERMISSION_GRANTED) {
+                allGranted = false;
+                break;
+            }
+        }
+
+        if (allGranted) {
+            // 权限已授予，初始化蓝牙
+            viewModel.initializeBluetooth();
+        } else {
+            // 请求权限
+            ActivityCompat.requestPermissions(this, permissions, REQUEST_BLUETOOTH_PERMISSIONS);
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions,
+                                           @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+
+        if (requestCode == REQUEST_BLUETOOTH_PERMISSIONS) {
+            boolean allGranted = true;
+            for (int result : grantResults) {
+                if (result != PackageManager.PERMISSION_GRANTED) {
+                    allGranted = false;
+                    break;
+                }
+            }
+
+            if (allGranted) {
+                // 权限已授予，初始化蓝牙
+                viewModel.initializeBluetooth();
+            } else {
+                // 权限被拒绝，提示用户
+                Toast.makeText(this, "需要蓝牙权限才能使用读表器功能", Toast.LENGTH_LONG).show();
+                checkIfPermissionPermanentlyDenied(permissions, grantResults);
+            }
+        }
+    }
+
+    /**
+     * 检查是否有权限被"不再询问"且未授权，引导用户去设置
+     */
+    private void checkIfPermissionPermanentlyDenied(String[] permissions, int[] grantResults) {
+        boolean showRationale = false;
+        boolean permanentlyDenied = false;
+
+        for (int i = 0; i < permissions.length; i++) {
+            if (grantResults[i] != PackageManager.PERMISSION_GRANTED) {
+                if (ActivityCompat.shouldShowRequestPermissionRationale(this, permissions[i])) {
+                    showRationale = true;
+                } else {
+                    permanentlyDenied = true;
+                }
+            }
+        }
+
+        if (permanentlyDenied) {
+            // 权限被永久拒绝，引导用户去系统设置中手动开启
+            new AlertDialog.Builder(this)
+                    .setTitle("需要蓝牙权限")
+                    .setMessage("蓝牙权限已被永久拒绝，请在系统设置中手动开启蓝牙相关权限以正常使用读表器功能。")
+                    .setPositiveButton("去设置", (dialog, which) -> {
+                        Intent intent = new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+                        intent.setData(android.net.Uri.parse("package:" + getPackageName()));
+                        startActivity(intent);
+                    })
+                    .setNegativeButton("取消", null)
+                    .show();
+        }
     }
 
     private void initViews() {
@@ -365,9 +485,14 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
-        // 每次回到前台时刷新
-        viewModel.loadBondedDevices();
-        viewModel.loadHistoryRecords();
+        // 每次回到前台时重新检查权限并刷新数据
+        if (viewModel.isBluetoothInitialized()) {
+            viewModel.loadBondedDevices();
+            viewModel.loadHistoryRecords();
+        } else {
+            // 如果蓝牙尚未初始化（可能刚从设置页面返回），重新检查权限
+            requestBluetoothPermissions();
+        }
     }
 
     @Override

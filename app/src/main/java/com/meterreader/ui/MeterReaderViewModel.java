@@ -52,12 +52,33 @@ public class MeterReaderViewModel extends AndroidViewModel {
     // ----- 历史记录 -----
     private MutableLiveData<List<MeterData>> historyRecords = new MutableLiveData<>(new ArrayList<>());
 
+    // 蓝牙是否已成功初始化（用于权限就绪后延迟初始化）
+    private boolean bluetoothInitialized = false;
+
     public MeterReaderViewModel(@NonNull Application application) {
         super(application);
         databaseHelper = DatabaseHelper.getInstance(application);
-        bluetoothService = new BluetoothReaderService(application);
+        // 注意：不在构造函数中初始化蓝牙服务，待权限就绪后由 initializeBluetooth() 调用
+    }
+
+    /**
+     * 初始化蓝牙服务（在权限被授予后调用）
+     * 将蓝牙初始化从构造函数中分离，避免在权限未授予时抛出 SecurityException
+     */
+    public void initializeBluetooth() {
+        if (bluetoothInitialized) return;
+        bluetoothInitialized = true;
+
+        bluetoothService = new BluetoothReaderService(getApplication());
         setupListeners();
         loadBondedDevices();
+    }
+
+    /**
+     * 蓝牙是否已初始化
+     */
+    public boolean isBluetoothInitialized() {
+        return bluetoothInitialized;
     }
 
     // ========== 监听器设置 ==========
@@ -171,9 +192,21 @@ public class MeterReaderViewModel extends AndroidViewModel {
     // ========== 设备发现与扫描 ==========
 
     /**
+     * 检查蓝牙服务是否已初始化，未初始化则提示
+     */
+    private boolean checkBluetoothReady() {
+        if (!bluetoothInitialized || bluetoothService == null) {
+            alarmMessage.postValue("蓝牙未就绪，请确保已授予蓝牙权限");
+            return false;
+        }
+        return true;
+    }
+
+    /**
      * 开始蓝牙扫描
      */
     public void startScan() {
+        if (!checkBluetoothReady()) return;
         if (!bluetoothService.isBluetoothAvailable()) {
             alarmMessage.postValue("请先开启蓝牙");
             return;
@@ -195,6 +228,7 @@ public class MeterReaderViewModel extends AndroidViewModel {
      * 停止蓝牙扫描
      */
     public void stopScan() {
+        if (!checkBluetoothReady()) return;
         bluetoothService.stopDiscovery();
         isScanning.postValue(false);
     }
@@ -203,11 +237,16 @@ public class MeterReaderViewModel extends AndroidViewModel {
      * 加载已配对设备
      */
     public void loadBondedDevices() {
+        if (!checkBluetoothReady()) return;
         if (!bluetoothService.isBluetoothAvailable()) return;
 
-        Set<BluetoothDevice> devices = bluetoothService.getBondedDevices();
-        if (devices != null) {
-            bondedDevices.postValue(new ArrayList<>(devices));
+        try {
+            Set<BluetoothDevice> devices = bluetoothService.getBondedDevices();
+            if (devices != null) {
+                bondedDevices.postValue(new ArrayList<>(devices));
+            }
+        } catch (SecurityException e) {
+            alarmMessage.postValue("权限不足，无法获取已配对设备列表");
         }
     }
 
@@ -217,6 +256,7 @@ public class MeterReaderViewModel extends AndroidViewModel {
      * 连接设备
      */
     public boolean connectToDevice(BluetoothDevice device) {
+        if (!checkBluetoothReady()) return false;
         modeStatus.postValue("正在连接...");
         boolean result = bluetoothService.connectToDevice(device);
         if (!result) {
@@ -229,6 +269,7 @@ public class MeterReaderViewModel extends AndroidViewModel {
      * 断开连接
      */
     public void disconnect() {
+        if (bluetoothService == null) return;
         bluetoothService.disconnect();
         if (Boolean.TRUE.equals(isAutoMode.getValue())) {
             isAutoMode.postValue(false);
@@ -241,6 +282,7 @@ public class MeterReaderViewModel extends AndroidViewModel {
      * 手动读取当前连接设备的数据
      */
     public void manualRead() {
+        if (!checkBluetoothReady()) return;
         if (!Boolean.TRUE.equals(connectionStatus.getValue())) {
             alarmMessage.postValue("请先连接蓝牙设备");
             return;
@@ -253,6 +295,7 @@ public class MeterReaderViewModel extends AndroidViewModel {
      * 手动读取指定地址的电表
      */
     public void manualReadAddress(int address) {
+        if (!checkBluetoothReady()) return;
         if (!Boolean.TRUE.equals(connectionStatus.getValue())) {
             alarmMessage.postValue("请先连接蓝牙设备");
             return;
@@ -267,6 +310,7 @@ public class MeterReaderViewModel extends AndroidViewModel {
      * 启动自动轮询模式
      */
     public void startAutoMode() {
+        if (!checkBluetoothReady()) return;
         if (!Boolean.TRUE.equals(connectionStatus.getValue())) {
             alarmMessage.postValue("请先连接蓝牙设备");
             return;
@@ -278,6 +322,7 @@ public class MeterReaderViewModel extends AndroidViewModel {
      * 停止自动轮询模式
      */
     public void stopAutoMode() {
+        if (bluetoothService == null) return;
         bluetoothService.stopAutoPolling();
     }
 
@@ -379,6 +424,8 @@ public class MeterReaderViewModel extends AndroidViewModel {
     @Override
     protected void onCleared() {
         super.onCleared();
-        bluetoothService.destroy();
+        if (bluetoothService != null) {
+            bluetoothService.destroy();
+        }
     }
 }

@@ -140,10 +140,16 @@ public class BluetoothReaderService {
 
     /**
      * 获取已配对设备列表
+     * 注意：Android 12+ 需要 BLUETOOTH_CONNECT 运行时权限
      */
     public Set<BluetoothDevice> getBondedDevices() {
         if (bluetoothAdapter == null) return null;
-        return bluetoothAdapter.getBondedDevices();
+        try {
+            return bluetoothAdapter.getBondedDevices();
+        } catch (SecurityException e) {
+            Log.e(TAG, "缺少 BLUETOOTH_CONNECT 权限: " + e.getMessage());
+            return null;
+        }
     }
 
     // ========== 蓝牙发现扫描（新增） ==========
@@ -151,6 +157,7 @@ public class BluetoothReaderService {
     /**
      * 开始蓝牙发现扫描
      * 自动搜索无线覆盖范围内的所有蓝牙设备
+     * 注意：Android 12+ 需要 BLUETOOTH_SCAN 运行时权限
      */
     public boolean startDiscovery() {
         if (bluetoothAdapter == null || !bluetoothAdapter.isEnabled()) {
@@ -159,8 +166,12 @@ public class BluetoothReaderService {
         }
 
         // 取消已有的扫描
-        if (isScanning) {
-            bluetoothAdapter.cancelDiscovery();
+        try {
+            if (isScanning) {
+                bluetoothAdapter.cancelDiscovery();
+            }
+        } catch (SecurityException e) {
+            Log.w(TAG, "取消扫描缺少权限: " + e.getMessage());
         }
 
         // 清空之前发现的设备列表
@@ -171,17 +182,28 @@ public class BluetoothReaderService {
         IntentFilter filter = new IntentFilter();
         filter.addAction(BluetoothDevice.ACTION_FOUND);
         filter.addAction(BluetoothAdapter.ACTION_DISCOVERY_FINISHED);
-        context.registerReceiver(discoveryReceiver, filter);
+        try {
+            context.registerReceiver(discoveryReceiver, filter);
+        } catch (SecurityException e) {
+            Log.e(TAG, "注册蓝牙广播接收器缺少权限: " + e.getMessage());
+            return false;
+        }
 
         isScanning = true;
-        boolean started = bluetoothAdapter.startDiscovery();
-        if (started) {
-            Log.d(TAG, "蓝牙扫描已启动");
-        } else {
-            Log.w(TAG, "蓝牙扫描启动失败");
+        try {
+            boolean started = bluetoothAdapter.startDiscovery();
+            if (started) {
+                Log.d(TAG, "蓝牙扫描已启动");
+            } else {
+                Log.w(TAG, "蓝牙扫描启动失败");
+                isScanning = false;
+            }
+            return started;
+        } catch (SecurityException e) {
+            Log.e(TAG, "蓝牙扫描缺少 BLUETOOTH_SCAN 权限: " + e.getMessage());
             isScanning = false;
+            return false;
         }
-        return started;
     }
 
     /**
