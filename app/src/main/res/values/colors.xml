@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="dark_bg">#1a1a2e</color>
+    <color name="card_bg">#16213e</color>
+    <color name="primary_blue">#0f3460</color>
+    <color name="accent_purple">#533483</color>
+    <color name="text_primary">#e0e0e0</color>
+    <color name="text_secondary">#9e9e9e</color>
+    <color name="alarm_red">#ff6b6b</color>
+    <color name="alarm_yellow">#ffd93d</color>
+    <color name="normal_green">#6bcb77</color>
+    <color name="white">#FFFFFFFF</color>
+    <color name="black">#FF000000</color>
+</resources>
